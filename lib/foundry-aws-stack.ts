@@ -1,15 +1,20 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
+import { FargateConstruct } from './fargate';
+import { Ec2Construct } from './ec2';
 
 export class FoundryAwsStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-       // VPC padrão
+      // VPC padrão
     const vpc = cdk.aws_ec2.Vpc.fromLookup(this, 'DefaultVpc', { isDefault: true });
 
     // Cluster ECS
-    const cluster = new cdk.aws_ecs.Cluster(this, 'EcsCluster', { vpc });
+    const cluster = new cdk.aws_ecs.Cluster(this, 'EcsCluster', { 
+      vpc,
+      clusterName: 'FoundryCluster',
+     });
 
     // Sistema de Arquivos EFS
     const fileSystem = new cdk.aws_efs.FileSystem(this, 'EfsFileSystem', {
@@ -20,15 +25,22 @@ export class FoundryAwsStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
-    // Definição de Tarefa (Task Definition) com arquitetura arm64
-    const taskDefinition = new cdk.aws_ecs.FargateTaskDefinition(this, 'TaskDefinition', {
-      memoryLimitMiB: 512, // Compatível com o Free Tier
-      cpu: 256, // Compatível com o Free Tier
-      runtimePlatform: {
-        operatingSystemFamily: cdk.aws_ecs.OperatingSystemFamily.LINUX,
-        cpuArchitecture: cdk.aws_ecs.CpuArchitecture.ARM64,
-      },
-    });
+    fileSystem.addToResourcePolicy(
+      new cdk.aws_iam.PolicyStatement({
+        actions: ['elasticfilesystem:ClientMount'],
+        principals: [new cdk.aws_iam.AnyPrincipal()],
+        conditions: {
+          Bool: {
+            'elasticfilesystem:AccessedViaMountTarget': 'true'
+          }
+        }
+      })
+    )
+
+    const serviceType = this.node.tryGetContext('serviceType') || 'EC2'; // Default para EC
+
+    const serviceConstruct = serviceType === 'EC2' ? new Ec2Construct(this, 'Ec2Construct', {cluster, vpc}) : new FargateConstruct(this, 'FargateConstruct', {cluster});
+    const { taskDefinition, service } = serviceConstruct;
 
     // Integração do EFS com a Task Definition
     const volumeName = 'EfsVolume';
@@ -41,11 +53,19 @@ export class FoundryAwsStack extends cdk.Stack {
 
     // Configuração do contêiner FoundryVTT
     const container = taskDefinition.addContainer('FoundryContainer', {
+      memoryLimitMiB: 896,
       image: cdk.aws_ecs.ContainerImage.fromRegistry('felddy/foundryvtt:latest'),
       portMappings: [{ containerPort: 30000, protocol: cdk.aws_ecs.Protocol.TCP }], // Porta interna do contêiner
       logging: cdk.aws_ecs.LogDriver.awsLogs({ streamPrefix: 'foundry' }),
       environment: {
-        FOUNDRY_RELEASE_URL: process.env.FOUNDRY_RELEASE_URL!,
+        FOUNDRY_RELEASE_URL: process.env.FOUNDRY_RELEASE_URL || '',
+        FOUNDRY_USERNAME: process.env.FOUNDRY_USERNAME || '',
+        FOUNDRY_PASSWORD: process.env.FOUNDRY_PASSWORD || '',
+      },
+      healthCheck: {
+        command: ['CMD-SHELL', 'curl -f http://localhost:30000 || exit 1'],
+        retries: 5,
+        startPeriod: cdk.Duration.seconds(35),
       }
     });
 
@@ -58,26 +78,10 @@ export class FoundryAwsStack extends cdk.Stack {
       readOnly: false,
     });
 
-    // Serviço ECS com Fargate
-    const service = new cdk.aws_ecs.FargateService(this, 'EcsService', {
-      cluster,
-      taskDefinition,
-      desiredCount: 1, // Apenas uma tarefa para manter no Free Tier
-    });
-
-    // Security Group para o Load Balancer
-    const albSecurityGroup = new cdk.aws_ec2.SecurityGroup(this, 'AlbSecurityGroup', {
-      vpc,
-      description: 'Allow HTTP traffic',
-      allowAllOutbound: true,
-    });
-    albSecurityGroup.addIngressRule(cdk.aws_ec2.Peer.anyIpv4(), cdk.aws_ec2.Port.tcp(80), 'Allow HTTP');
-
     // Application Load Balancer
     const alb = new cdk.aws_elasticloadbalancingv2.ApplicationLoadBalancer(this, 'ApplicationLoadBalancer', {
       vpc,
       internetFacing: true,
-      securityGroup: albSecurityGroup,
     });
 
     // Listener para o Load Balancer
@@ -88,6 +92,7 @@ export class FoundryAwsStack extends cdk.Stack {
 
     // Permissões de rede para o EFS
     fileSystem.connections.allowDefaultPortFrom(service.connections);
+    fileSystem.grantRootAccess(service.taskDefinition.taskRole.grantPrincipal);
 
     // Integração do ALB com o Serviço ECS
     listener.addTargets('EcsServiceTarget', {
@@ -96,6 +101,8 @@ export class FoundryAwsStack extends cdk.Stack {
       targets: [service],
       healthCheck: {
         path: '/', // Caminho de verificação de saúde
+        unhealthyThresholdCount: 3,
+        healthyHttpCodes: '200,302',
       },
     });
 

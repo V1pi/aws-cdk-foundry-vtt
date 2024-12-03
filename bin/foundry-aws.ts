@@ -5,6 +5,7 @@ import { configDotenv } from 'dotenv';
 
 configDotenv();
 const app = new cdk.App();
+
 new FoundryAwsStack(app, 'FoundryAwsStack', {
   env: {
     account: process.env.ACCOUNT,
