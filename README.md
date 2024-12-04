@@ -22,5 +22,5 @@ ssh ec2-user@<instance-id>
 ## First run command:
 The command below must be executed in the EC2 instance in the first connection.
 ```
-sudo chown -R ec2-user:ec2-user /foundry
+sudo setfacl -R -m u:ec2-user:rwx /foundry
 ```
