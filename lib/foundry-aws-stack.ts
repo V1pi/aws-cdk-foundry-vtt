@@ -16,45 +16,24 @@ export class FoundryAwsStack extends cdk.Stack {
       clusterName: 'FoundryCluster',
      });
 
-    // Sistema de Arquivos EFS
-    const fileSystem = new cdk.aws_efs.FileSystem(this, 'EfsFileSystem', {
-      vpc,
-      lifecyclePolicy: cdk.aws_efs.LifecyclePolicy.AFTER_7_DAYS, // Mover para armazenamento mais barato após 7 dias
-      performanceMode: cdk.aws_efs.PerformanceMode.GENERAL_PURPOSE,
-      throughputMode: cdk.aws_efs.ThroughputMode.BURSTING,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-    });
-
-    fileSystem.addToResourcePolicy(
-      new cdk.aws_iam.PolicyStatement({
-        actions: ['elasticfilesystem:ClientMount'],
-        principals: [new cdk.aws_iam.AnyPrincipal()],
-        conditions: {
-          Bool: {
-            'elasticfilesystem:AccessedViaMountTarget': 'true'
-          }
-        }
-      })
-    )
-
     const serviceType = this.node.tryGetContext('serviceType') || 'EC2'; // Default para EC
 
     const serviceConstruct = serviceType === 'EC2' ? new Ec2Construct(this, 'Ec2Construct', {cluster, vpc}) : new FargateConstruct(this, 'FargateConstruct', {cluster});
     const { taskDefinition, service } = serviceConstruct;
 
     // Integração do EFS com a Task Definition
-    const volumeName = 'EfsVolume';
+    const volumeName = 'FoundryVolume';
     taskDefinition.addVolume({
       name: volumeName,
-      efsVolumeConfiguration: {
-        fileSystemId: fileSystem.fileSystemId,
-      },
+      host: {
+        sourcePath: '/data'
+      }
     });
 
     // Configuração do contêiner FoundryVTT
     const container = taskDefinition.addContainer('FoundryContainer', {
       memoryLimitMiB: 896,
-      image: cdk.aws_ecs.ContainerImage.fromRegistry('felddy/foundryvtt:latest'),
+      image: cdk.aws_ecs.ContainerImage.fromRegistry('felddy/foundryvtt:release-12.331.0'),
       portMappings: [{ containerPort: 30000, protocol: cdk.aws_ecs.Protocol.TCP }], // Porta interna do contêiner
       logging: cdk.aws_ecs.LogDriver.awsLogs({ streamPrefix: 'foundry' }),
       environment: {
@@ -89,10 +68,6 @@ export class FoundryAwsStack extends cdk.Stack {
       port: 80,
       open: true,
     });
-
-    // Permissões de rede para o EFS
-    fileSystem.connections.allowDefaultPortFrom(service.connections);
-    fileSystem.grantRootAccess(service.taskDefinition.taskRole.grantPrincipal);
 
     // Integração do ALB com o Serviço ECS
     listener.addTargets('EcsServiceTarget', {
