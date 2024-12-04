@@ -24,3 +24,8 @@ The command below must be executed in the EC2 instance in the first connection.
 ```
 sudo setfacl -R -m u:ec2-user:rwx /foundry
 ```
+
+Copy files:
+````
+scp ./data.tar ec2-user@<instance-id>:/foundry/
+```

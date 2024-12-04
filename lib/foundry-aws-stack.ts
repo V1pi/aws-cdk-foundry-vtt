@@ -40,6 +40,9 @@ export class FoundryAwsStack extends cdk.Stack {
         FOUNDRY_RELEASE_URL: process.env.FOUNDRY_RELEASE_URL || '',
         FOUNDRY_USERNAME: process.env.FOUNDRY_USERNAME || '',
         FOUNDRY_PASSWORD: process.env.FOUNDRY_PASSWORD || '',
+        CONTAINER_PRESERVE_CONFIG: 'true',
+        FOUNDRY_ADMIN_KEY: process.env.FOUNDRY_ADMIN_KEY || '',
+        TIMEZONE: process.env.TIMEZONE || 'America/Sao_Paulo',
       },
       healthCheck: {
         command: ['CMD-SHELL', 'curl -f http://localhost:30000 || exit 1'],
