@@ -1,14 +1,26 @@
-# Welcome to your CDK TypeScript project
+# Connect to EC2
 
-This is a blank project for CDK development with TypeScript.
+Linux:
+```
+Host i-* mi-*
+  IdentityFile ~/.ssh/foundry
+  ProxyCommand sh -c "aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p' --profile personal"
+```
 
-The `cdk.json` file tells the CDK Toolkit how to execute your app.
+Windowns:
+```
+Host i-* mi-*
+  IdentityFile ~/.ssh/foundry
+  ProxyCommand C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe "aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p --profile personal"
+```
 
-## Useful commands
+Command:
+```
+ssh ec2-user@<instance-id>
+```
 
-* `npm run build`   compile typescript to js
-* `npm run watch`   watch for changes and compile
-* `npm run test`    perform the jest unit tests
-* `npx cdk deploy`  deploy this stack to your default AWS account/region
-* `npx cdk diff`    compare deployed stack with current state
-* `npx cdk synth`   emits the synthesized CloudFormation template
+## First run command:
+The command below must be executed in the EC2 instance in the first connection.
+```
+sudo chown -R ec2-user:ec2-user /foundry
+```

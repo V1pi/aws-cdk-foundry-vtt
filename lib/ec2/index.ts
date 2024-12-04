@@ -12,30 +12,11 @@ export class Ec2Construct extends Construct {
   constructor(scope: Construct, id: string, props: Props) {
     super(scope, id);
 
-    const ebsSnapshotId = process.env.EBS_SNAPSHOT_ID
-
-    const ebs = ebsSnapshotId && ebsSnapshotId.length > 0 ? 
-      cdk.aws_autoscaling.BlockDeviceVolume.ebsFromSnapshot(ebsSnapshotId, {
-        deleteOnTermination: false,
-        volumeSize: 30,
-        volumeType: cdk.aws_autoscaling.EbsDeviceVolumeType.GP3
-      })
-      : cdk.aws_autoscaling.BlockDeviceVolume.ebs(30, {
-          deleteOnTermination: false,
-          volumeType: cdk.aws_autoscaling.EbsDeviceVolumeType.GP3
-      });
-
     const asg = props.cluster.addCapacity('DefaultCapacity', {
         instanceType: new cdk.aws_ec2.InstanceType('t2.micro'),
         machineImage: cdk.aws_ecs.EcsOptimizedImage.amazonLinux2(),
         maxCapacity: 1,
         ssmSessionPermissions: true,
-        blockDevices: [
-          {
-            deviceName: '/dev/xvda',
-            volume: ebs
-          }
-        ]
     })
 
     asg.grantPrincipal.addToPrincipalPolicy(new cdk.aws_iam.PolicyStatement({
@@ -46,13 +27,9 @@ export class Ec2Construct extends Construct {
     }));
 
     asg.addUserData(
-        'if ! file -s /dev/xvda | grep -q filesystem; then',
-        '  mkfs -t ext4 /dev/xvda',
-        'fi',
-        'mkdir -p /data',
-        'mount /dev/xvda /data',
-        'echo "/dev/xvda /data ext4 defaults,nofail 0 2" >> /etc/fstab'
-    );
+      'mkdir -p /home/ec2-user/.ssh || true',
+      `echo "${process.env.PUBLIC_SSH_KEY}" >> /home/ec2-user/.ssh/authorized_keys`
+    )
 
     this.taskDefinition = new cdk.aws_ecs.Ec2TaskDefinition(this, 'TaskDefinition');
     

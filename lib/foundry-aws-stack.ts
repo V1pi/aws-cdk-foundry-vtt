@@ -26,8 +26,8 @@ export class FoundryAwsStack extends cdk.Stack {
     taskDefinition.addVolume({
       name: volumeName,
       host: {
-        sourcePath: '/data'
-      }
+        sourcePath: '/foundry'
+      },
     });
 
     // Configuração do contêiner FoundryVTT
