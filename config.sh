@@ -5,6 +5,9 @@ echo "Installing jq"
 # Install jq
 yum install -y jq
 
+# Install acl
+yum install -y acl
+
 echo "Loading environment variables from /etc/config.json"
 # Load environment variables from /etc/config.json
 IP=$(jq -r '.IP' /etc/config.json)
@@ -54,6 +57,8 @@ if [[ -n "${IP}" && -n "${INSTANCE_ID}" && -n "${REGION}" ]]; then
 else
     echo "Elastic IP or instance metadata not available. Skipping EIP attachment."
 fi
+
+setfacl -R -m u:ec2-user:rwx /foundry
 
 # Log completion
 echo "Instance initialization script completed"
