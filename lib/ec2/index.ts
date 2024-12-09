@@ -1,5 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
+import { AsgCapacityProvider } from 'aws-cdk-lib/aws-ecs';
 import { Construct } from 'constructs';
+import * as path from 'path';
 
 interface Props {
   cluster: cdk.aws_ecs.Cluster;
@@ -12,12 +14,47 @@ export class Ec2Construct extends Construct {
   constructor(scope: Construct, id: string, props: Props) {
     super(scope, id);
 
-    const asg = props.cluster.addCapacity('DefaultCapacity', {
-        instanceType: new cdk.aws_ec2.InstanceType('t2.micro'),
-        machineImage: cdk.aws_ecs.EcsOptimizedImage.amazonLinux2(),
-        maxCapacity: 1,
-        ssmSessionPermissions: true,
-    })
+    const ec2Eip = new cdk.aws_ec2.CfnEIP(this, 'ec2Eip');
+
+    const asg = new cdk.aws_autoscaling.AutoScalingGroup(this, 'AutoScalingGroup', {
+      vpc: props.vpc,
+      instanceType: new cdk.aws_ec2.InstanceType('t2.micro'),
+      machineImage: cdk.aws_ecs.EcsOptimizedImage.amazonLinux2023(),
+      maxCapacity: 1,
+      ssmSessionPermissions: true,
+      signals: cdk.aws_autoscaling.Signals.waitForCount(1),
+      userData: cdk.aws_ec2.UserData.forLinux(),
+      initOptions: {
+        configSets: ['default'],
+        printLog: true,
+        ignoreFailures: true,
+      },
+      init: cdk.aws_ec2.CloudFormationInit.fromConfigSets({
+        configSets: {
+          default: ['config']
+        },
+        configs: {
+          config: new cdk.aws_ec2.InitConfig([
+            cdk.aws_ec2.InitFile.fromObject('/etc/config.json', {
+              IP: ec2Eip.ref,
+              PUBLIC_SSH_KEY: process.env.PUBLIC_SSH_KEY,
+              SSL_CERTIFICATE_ZIP_URL: process.env.SSL_CERTIFICATE_ZIP_URL
+            }),
+            cdk.aws_ec2.InitFile.fromFileInline('/etc/init.d/config.sh', path.join(__dirname, '..', '..', 'config.sh')),
+            cdk.aws_ec2.InitCommand.shellCommand('chmod +x /etc/init.d/config.sh'),
+            cdk.aws_ec2.InitCommand.shellCommand('/etc/init.d/config.sh'),
+          ])
+        }
+      })
+    });
+
+    // @ts-nocheck
+    // @ts-ignore
+    const resourceLocator = `--region ${cdk.Stack.of(this).region} --stack ${cdk.Stack.of(this).stackName} --resource ${asg.node.defaultChild!.logicalId!}`
+    asg.addUserData('yum install -y aws-cfn-bootstrap',
+      `/opt/aws/bin/cfn-init -v ${resourceLocator} -c default`,
+      `/opt/aws/bin/cfn-signal -e 0 ${resourceLocator}`,
+      'cat /var/log/cfn-init.log >&2');
 
     asg.grantPrincipal.addToPrincipalPolicy(new cdk.aws_iam.PolicyStatement({
       actions: ['ssm:StartSession'],
@@ -26,10 +63,19 @@ export class Ec2Construct extends Construct {
       ],
     }));
 
-    asg.addUserData(
-      'mkdir -p /home/ec2-user/.ssh || true',
-      `echo "${process.env.PUBLIC_SSH_KEY}" >> /home/ec2-user/.ssh/authorized_keys`
-    )
+    asg.grantPrincipal.addToPrincipalPolicy(new cdk.aws_iam.PolicyStatement({
+      actions: ['ec2:AssociateAddress'],
+      resources: [`arn:aws:ec2:${cdk.Stack.of(this).region}:${cdk.Stack.of(this).account}:*`],
+    }));
+
+    asg.connections.allowFromAnyIpv4(cdk.aws_ec2.Port.tcp(80));
+    if (!!process.env.SSL_CERTIFICATE_ZIP_URL) {
+      asg.connections.allowFromAnyIpv4(cdk.aws_ec2.Port.tcp(443));
+    }
+
+    props.cluster.addAsgCapacityProvider(new AsgCapacityProvider(this, 'AsgCapacityProvider', {
+      autoScalingGroup: asg
+    }))
 
     this.taskDefinition = new cdk.aws_ecs.Ec2TaskDefinition(this, 'TaskDefinition');
     

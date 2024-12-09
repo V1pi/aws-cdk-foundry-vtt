@@ -29,3 +29,11 @@ Copy files:
 ````
 scp ./data.tar ec2-user@<instance-id>:/foundry/
 ```
+
+```
+    const resourceLocator = `--region ${cdk.Stack.of(this).region} --stack ${cdk.Stack.of(this).stackName} --resource ${asg.node.defaultChild!.logicalId!}`
+
+    asg.addUserData('yum install -y aws-cfn-bootstrap',
+      `/opt/aws/bin/cfn-init -v ${resourceLocator} -c default`,
+      `/opt/aws/bin/cfn-signal -e $? ${resourceLocator} -c default`);
+```

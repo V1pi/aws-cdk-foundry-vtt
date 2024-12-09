@@ -30,6 +30,10 @@ export class FoundryAwsStack extends cdk.Stack {
       },
     });
 
+    const curlCommand = !!process.env.SSL_CERTIFICATE_ZIP_URL
+      ? `curl -f -k https://localhost:30000 || exit 1`
+      : `curl -f http://localhost:30000 || exit 1`;
+
     // Configuração do contêiner FoundryVTT
     const container = taskDefinition.addContainer('FoundryContainer', {
       memoryLimitMiB: 896,
@@ -43,51 +47,26 @@ export class FoundryAwsStack extends cdk.Stack {
         CONTAINER_PRESERVE_CONFIG: 'true',
         FOUNDRY_ADMIN_KEY: process.env.FOUNDRY_ADMIN_KEY || '',
         TIMEZONE: process.env.TIMEZONE || 'America/Sao_Paulo',
+        FOUNDRY_SSL_CERT: process.env.FOUNDRY_SSL_CERT || '',
+        FOUNDRY_SSL_KEY: process.env.FOUNDRY_SSL_KEY || '',
       },
       healthCheck: {
-        command: ['CMD-SHELL', 'curl -f http://localhost:30000 || exit 1'],
+        command: ['CMD-SHELL', curlCommand],
         retries: 5,
         startPeriod: cdk.Duration.seconds(35),
       }
     });
 
-    container.addPortMappings({ containerPort: 30000, protocol: cdk.aws_ecs.Protocol.TCP }); // Porta externa do contêiner
+    container.addPortMappings({ containerPort: 30000, protocol: cdk.aws_ecs.Protocol.TCP, hostPort: 80 });
+    if (!!process.env.SSL_CERTIFICATE_ZIP_URL) {
+      container.addPortMappings({ containerPort: 30000, protocol: cdk.aws_ecs.Protocol.TCP, hostPort: 443 });
+    }
 
     // Montar o volume no contêiner
     container.addMountPoints({
       sourceVolume: volumeName,
       containerPath: '/data',
       readOnly: false,
-    });
-
-    // Application Load Balancer
-    const alb = new cdk.aws_elasticloadbalancingv2.ApplicationLoadBalancer(this, 'ApplicationLoadBalancer', {
-      vpc,
-      internetFacing: true,
-    });
-
-    // Listener para o Load Balancer
-    const listener = alb.addListener('HttpListener', {
-      port: 80,
-      open: true,
-    });
-
-    // Integração do ALB com o Serviço ECS
-    listener.addTargets('EcsServiceTarget', {
-      port: 30000, // Porta que o ALB redirecionará para o contêiner
-      protocol: cdk.aws_elasticloadbalancingv2.ApplicationProtocol.HTTP,
-      targets: [service],
-      healthCheck: {
-        path: '/', // Caminho de verificação de saúde
-        unhealthyThresholdCount: 3,
-        healthyHttpCodes: '200,302',
-      },
-    });
-
-    // Output do DNS do ALB
-    new cdk.CfnOutput(this, 'LoadBalancerDNS', {
-      value: alb.loadBalancerDnsName,
-      description: 'DNS do ALB para acessar o FoundryVTT',
     });
   }
 }
