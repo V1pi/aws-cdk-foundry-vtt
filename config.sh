@@ -13,11 +13,19 @@ echo "Loading environment variables from /etc/config.json"
 IP=$(jq -r '.IP' /etc/config.json)
 PUBLIC_SSH_KEY=$(jq -r '.PUBLIC_SSH_KEY' /etc/config.json)
 SSL_CERTIFICATE_ZIP_URL=$(jq -r '.SSL_CERTIFICATE_ZIP_URL' /etc/config.json)
+EFS_ID=$(jq -r '.EFS_ID' /etc/config.json)
 
 # Setup SSH authorized keys
 echo "Setting up SSH access"
 mkdir -p /home/ec2-user/.ssh || true
 echo "${PUBLIC_SSH_KEY}" >> /home/ec2-user/.ssh/authorized_keys
+
+# Configure and mount EFS at /foundry
+echo "Configuring and mounting EFS at /foundry"
+yum install -y amazon-efs-utils
+mkdir -p /foundry || true
+mount -t efs "${EFS_ID}" /foundry
+chown ec2-user:ec2-user /foundry
 
 # Ensure proper permissions for the SSH directory
 chmod 700 /home/ec2-user/.ssh
@@ -57,8 +65,6 @@ if [[ -n "${IP}" && -n "${INSTANCE_ID}" && -n "${REGION}" ]]; then
 else
     echo "Elastic IP or instance metadata not available. Skipping EIP attachment."
 fi
-
-setfacl -R -m u:ec2-user:rwx /foundry
 
 # Log completion
 echo "Instance initialization script completed"

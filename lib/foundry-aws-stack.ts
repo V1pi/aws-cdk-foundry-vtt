@@ -3,30 +3,64 @@ import { Construct } from 'constructs';
 import { FargateConstruct } from './fargate';
 import { Ec2Construct } from './ec2';
 
+interface Props extends cdk.StackProps {
+  vpc: cdk.aws_ec2.Vpc
+  eip: cdk.aws_ec2.CfnEIP
+}
 export class FoundryAwsStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props: Props) {
     super(scope, id, props);
 
       // VPC padrão
-    const vpc = cdk.aws_ec2.Vpc.fromLookup(this, 'DefaultVpc', { isDefault: true });
+    const vpc = props.vpc;
 
     // Cluster ECS
     const cluster = new cdk.aws_ecs.Cluster(this, 'EcsCluster', { 
       vpc,
       clusterName: 'FoundryCluster',
      });
+    
+    // Sistema de Arquivos EFS
+    const fileSystem = !!process.env.EFS_ARN && !!process.env.EFS_ID
+      ? cdk.aws_efs.FileSystem.fromFileSystemAttributes(this, 'EfsFileSystem', {
+        securityGroup: cdk.aws_ec2.SecurityGroup.fromSecurityGroupId(this, 'SecurityGroup', vpc.vpcDefaultSecurityGroup),
+        fileSystemArn: process.env.EFS_ARN,
+        fileSystemId: process.env.EFS_ID
+      })
+      : new cdk.aws_efs.FileSystem(this, 'EfsFileSystem', {
+        vpc,
+        performanceMode: cdk.aws_efs.PerformanceMode.GENERAL_PURPOSE,
+        throughputMode: cdk.aws_efs.ThroughputMode.BURSTING,
+        removalPolicy: cdk.RemovalPolicy.RETAIN,
+        enableAutomaticBackups: true,
+        securityGroup: cdk.aws_ec2.SecurityGroup.fromSecurityGroupId(this, 'SecurityGroup', vpc.vpcDefaultSecurityGroup)
+      });
+
+    fileSystem.addToResourcePolicy(
+      new cdk.aws_iam.PolicyStatement({
+        actions: ['elasticfilesystem:ClientMount'],
+        principals: [new cdk.aws_iam.AnyPrincipal()],
+        conditions: {
+          Bool: {
+            'elasticfilesystem:AccessedViaMountTarget': 'true'
+          }
+        }
+      })
+    )
 
     const serviceType = this.node.tryGetContext('serviceType') || 'EC2'; // Default para EC
 
-    const serviceConstruct = serviceType === 'EC2' ? new Ec2Construct(this, 'Ec2Construct', {cluster, vpc}) : new FargateConstruct(this, 'FargateConstruct', {cluster});
+    const serviceConstruct = serviceType === 'EC2'
+      ? new Ec2Construct(this, 'Ec2Construct', {eip: props.eip, cluster, vpc, efs: fileSystem})
+      : new FargateConstruct(this, 'FargateConstruct', {cluster});
     const { taskDefinition, service } = serviceConstruct;
 
     // Integração do EFS com a Task Definition
     const volumeName = 'FoundryVolume';
     taskDefinition.addVolume({
       name: volumeName,
-      host: {
-        sourcePath: '/foundry'
+      efsVolumeConfiguration: {
+        fileSystemId: fileSystem.fileSystemId,
       },
     });
 
@@ -68,5 +102,9 @@ export class FoundryAwsStack extends cdk.Stack {
       containerPath: '/data',
       readOnly: false,
     });
+
+    // Permissões de rede para o EFS
+    fileSystem.connections.allowDefaultPortFrom(service.connections);
+    fileSystem.grantRootAccess(service.taskDefinition.taskRole.grantPrincipal);
   }
 }

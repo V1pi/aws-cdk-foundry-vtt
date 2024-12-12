@@ -6,6 +6,8 @@ import * as path from 'path';
 interface Props {
   cluster: cdk.aws_ecs.Cluster;
   vpc: cdk.aws_ec2.IVpc;
+  efs: cdk.aws_efs.IFileSystem;
+  eip: cdk.aws_ec2.CfnEIP;
 }
 export class Ec2Construct extends Construct {
   taskDefinition: cdk.aws_ecs.TaskDefinition;
@@ -13,8 +15,6 @@ export class Ec2Construct extends Construct {
 
   constructor(scope: Construct, id: string, props: Props) {
     super(scope, id);
-
-    const ec2Eip = new cdk.aws_ec2.CfnEIP(this, 'ec2Eip');
 
     const asg = new cdk.aws_autoscaling.AutoScalingGroup(this, 'AutoScalingGroup', {
       vpc: props.vpc,
@@ -24,6 +24,9 @@ export class Ec2Construct extends Construct {
       ssmSessionPermissions: true,
       signals: cdk.aws_autoscaling.Signals.waitForCount(1),
       userData: cdk.aws_ec2.UserData.forLinux(),
+      vpcSubnets: {
+        subnetType: cdk.aws_ec2.SubnetType.PUBLIC
+      },
       initOptions: {
         configSets: ['default'],
         printLog: true,
@@ -36,9 +39,10 @@ export class Ec2Construct extends Construct {
         configs: {
           config: new cdk.aws_ec2.InitConfig([
             cdk.aws_ec2.InitFile.fromObject('/etc/config.json', {
-              IP: ec2Eip.ref,
+              IP: props.eip.ref,
               PUBLIC_SSH_KEY: process.env.PUBLIC_SSH_KEY,
-              SSL_CERTIFICATE_ZIP_URL: process.env.SSL_CERTIFICATE_ZIP_URL
+              SSL_CERTIFICATE_ZIP_URL: process.env.SSL_CERTIFICATE_ZIP_URL,
+              EFS_ID: props.efs.fileSystemId,
             }),
             cdk.aws_ec2.InitFile.fromFileInline('/etc/init.d/config.sh', path.join(__dirname, '..', '..', 'config.sh')),
             cdk.aws_ec2.InitCommand.shellCommand('chmod +x /etc/init.d/config.sh'),
@@ -72,6 +76,10 @@ export class Ec2Construct extends Construct {
     if (!!process.env.SSL_CERTIFICATE_ZIP_URL) {
       asg.connections.allowFromAnyIpv4(cdk.aws_ec2.Port.tcp(443));
     }
+
+    // Permissões de rede para o EFS
+    props.efs.connections.allowDefaultPortFrom(asg.connections);
+    props.efs.grantRootAccess(asg.grantPrincipal);
 
     props.cluster.addAsgCapacityProvider(new AsgCapacityProvider(this, 'AsgCapacityProvider', {
       autoScalingGroup: asg
