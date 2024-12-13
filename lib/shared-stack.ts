@@ -4,10 +4,38 @@ import { Construct } from 'constructs';
 export class SharedStack extends cdk.Stack {
   vpc: cdk.aws_ec2.Vpc;
   eip: cdk.aws_ec2.CfnEIP;
+  s3: cdk.aws_s3.Bucket;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
     this.eip = new cdk.aws_ec2.CfnEIP(this, 'EC2EIP');
+
+    this.s3 = new cdk.aws_s3.Bucket(this, 'FreeTierS3', {
+      bucketName: 'foundry-assets-v1pi',
+      blockPublicAccess: new cdk.aws_s3.BlockPublicAccess({
+        blockPublicAcls: false,
+        blockPublicPolicy: false,
+        restrictPublicBuckets: false,
+        ignorePublicAcls: false
+      }),
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      cors: [
+        {
+          allowedMethods: [cdk.aws_s3.HttpMethods.GET, cdk.aws_s3.HttpMethods.HEAD, cdk.aws_s3.HttpMethods.PUT],
+          allowedOrigins: (process.env.ALLOWED_S3_ORIGINS || '*').split(','),
+          allowedHeaders: ['*'],
+          maxAge: 3000
+        }
+      ]
+    });
+
+    // Adicionando uma política de bucket para permitir o acesso público aos objetos
+    this.s3.addToResourcePolicy(new cdk.aws_iam.PolicyStatement({
+      actions: ['s3:GetObject'],
+      resources: [`${this.s3.bucketArn}/*`], // Aplica-se a todos os objetos dentro do bucket
+      effect: cdk.aws_iam.Effect.ALLOW,
+      principals: [new cdk.aws_iam.StarPrincipal()], // Permite o acesso público
+    }));
 
     // Criação da VPC
     this.vpc = new cdk.aws_ec2.Vpc(this, 'FreeTierVPC', {
@@ -28,6 +56,13 @@ export class SharedStack extends cdk.Stack {
       ],
       natGateways: 0, // Não criar NAT Gateway (evitar custos adicionais)
     });
+
+    this.vpc.addGatewayEndpoint(
+      `GatewayEndpointS3`,
+      {
+        service: cdk.aws_ec2.GatewayVpcEndpointAwsService.S3,
+      },
+    );
 
     // Adicionar tags para fins de organização
     cdk.Tags.of(this.vpc).add('Environment', 'FreeTier');

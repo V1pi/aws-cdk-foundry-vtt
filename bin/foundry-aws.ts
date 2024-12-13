@@ -21,6 +21,7 @@ const foundry = new FoundryAwsStack(app, 'FoundryAwsStack', {
   },
   vpc: shared.vpc,
   eip: shared.eip,
+  s3: shared.s3,
 });
 
 foundry.addDependency(shared);

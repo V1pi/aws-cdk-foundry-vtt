@@ -5,8 +5,8 @@ echo "Installing jq"
 # Install jq
 yum install -y jq
 
-# Install acl
-yum install -y acl
+# Install rsync
+yum install -y rsync
 
 echo "Loading environment variables from /etc/config.json"
 # Load environment variables from /etc/config.json
@@ -32,9 +32,15 @@ chmod 700 /home/ec2-user/.ssh
 chmod 600 /home/ec2-user/.ssh/authorized_keys
 chown -R ec2-user:ec2-user /home/ec2-user/.ssh
 
+# Check if /etc/options.json exists and copy to /foundry
+if [[ -f "/etc/options.json" ]]; then
+    echo "Copying /etc/options.json to /foundry/"
+    cp /etc/options.json /foundry/
+fi
+
 # If SSL_CERTIFICATE_ZIP_URL is defined, download and extract the SSL certificates
-if [[ ! -d "/foundry/ssh" ]]; then
-    echo "/foundry/ssh does not exist or is empty, proceeding with SSL certificate setup"
+if [[ ! -d "/foundry/ssl" ]]; then
+    echo "/foundry/ssl does not exist or is empty, proceeding with SSL certificate setup"
 
     # Create directory for SSL certificates
     echo "Creating directory for SSL certificates"

@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import { AsgCapacityProvider } from 'aws-cdk-lib/aws-ecs';
 import { Construct } from 'constructs';
 import * as path from 'path';
+import { Config } from '../config';
 
 interface Props {
   cluster: cdk.aws_ecs.Cluster;
@@ -15,6 +16,13 @@ export class Ec2Construct extends Construct {
 
   constructor(scope: Construct, id: string, props: Props) {
     super(scope, id);
+
+    const conditionalConfigs: cdk.aws_ec2.InitElement[] = [];
+
+    if (Config.hasS3Options()) {
+      const initS3File = cdk.aws_ec2.InitFile.fromFileInline('/etc/options.json', Config.getS3OptionsPath());
+      conditionalConfigs.push(initS3File);
+    }
 
     const asg = new cdk.aws_autoscaling.AutoScalingGroup(this, 'AutoScalingGroup', {
       vpc: props.vpc,
@@ -38,6 +46,7 @@ export class Ec2Construct extends Construct {
         },
         configs: {
           config: new cdk.aws_ec2.InitConfig([
+            ...conditionalConfigs,
             cdk.aws_ec2.InitFile.fromObject('/etc/config.json', {
               IP: props.eip.ref,
               PUBLIC_SSH_KEY: process.env.PUBLIC_SSH_KEY,

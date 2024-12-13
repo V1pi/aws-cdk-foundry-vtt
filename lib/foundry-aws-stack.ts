@@ -2,10 +2,12 @@ import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { FargateConstruct } from './fargate';
 import { Ec2Construct } from './ec2';
+import { Config } from './config';
 
 interface Props extends cdk.StackProps {
   vpc: cdk.aws_ec2.Vpc
   eip: cdk.aws_ec2.CfnEIP
+  s3: cdk.aws_s3.Bucket
 }
 export class FoundryAwsStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: Props) {
@@ -19,13 +21,14 @@ export class FoundryAwsStack extends cdk.Stack {
       vpc,
       clusterName: 'FoundryCluster',
      });
+
+    const defaultSecurityGroup = cdk.aws_ec2.SecurityGroup.fromSecurityGroupId(this, 'SecurityGroup', vpc.vpcDefaultSecurityGroup);
     
     // Sistema de Arquivos EFS
-    const fileSystem = !!process.env.EFS_ARN && !!process.env.EFS_ID
+    const fileSystem = !!process.env.EFS_ID
       ? cdk.aws_efs.FileSystem.fromFileSystemAttributes(this, 'EfsFileSystem', {
-        securityGroup: cdk.aws_ec2.SecurityGroup.fromSecurityGroupId(this, 'SecurityGroup', vpc.vpcDefaultSecurityGroup),
-        fileSystemArn: process.env.EFS_ARN,
-        fileSystemId: process.env.EFS_ID
+        securityGroup: defaultSecurityGroup,
+        fileSystemId: process.env.EFS_ID,
       })
       : new cdk.aws_efs.FileSystem(this, 'EfsFileSystem', {
         vpc,
@@ -33,7 +36,7 @@ export class FoundryAwsStack extends cdk.Stack {
         throughputMode: cdk.aws_efs.ThroughputMode.BURSTING,
         removalPolicy: cdk.RemovalPolicy.RETAIN,
         enableAutomaticBackups: true,
-        securityGroup: cdk.aws_ec2.SecurityGroup.fromSecurityGroupId(this, 'SecurityGroup', vpc.vpcDefaultSecurityGroup)
+        securityGroup: defaultSecurityGroup
       });
 
     fileSystem.addToResourcePolicy(
@@ -47,6 +50,17 @@ export class FoundryAwsStack extends cdk.Stack {
         }
       })
     )
+    if (!!process.env.EFS_ID) {
+      props.vpc.selectSubnets({subnetType: cdk.aws_ec2.SubnetType.PRIVATE_ISOLATED})
+        .subnetIds
+        .forEach((subnetId, idx) => {
+        new cdk.aws_efs.CfnMountTarget(this, `EfsMountTarget-${idx}`, {
+          fileSystemId: fileSystem.fileSystemId,
+          subnetId: subnetId,
+          securityGroups: [vpc.vpcDefaultSecurityGroup]
+        })
+      })
+    }
 
     const serviceType = this.node.tryGetContext('serviceType') || 'EC2'; // Default para EC
 
@@ -83,6 +97,7 @@ export class FoundryAwsStack extends cdk.Stack {
         TIMEZONE: process.env.TIMEZONE || 'America/Sao_Paulo',
         FOUNDRY_SSL_CERT: process.env.FOUNDRY_SSL_CERT || '',
         FOUNDRY_SSL_KEY: process.env.FOUNDRY_SSL_KEY || '',
+        FOUNDRY_AWS_CONFIG: Config.hasS3Options() ? Config.containerS3OptionsPath() : '',
       },
       healthCheck: {
         command: ['CMD-SHELL', curlCommand],
@@ -106,5 +121,8 @@ export class FoundryAwsStack extends cdk.Stack {
     // Permissões de rede para o EFS
     fileSystem.connections.allowDefaultPortFrom(service.connections);
     fileSystem.grantRootAccess(service.taskDefinition.taskRole.grantPrincipal);
+
+    // Permissões s3 para o EFS
+    props.s3.grantReadWrite(service.taskDefinition.taskRole.grantPrincipal);
   }
 }
