@@ -29,6 +29,7 @@ export class Ec2Construct extends Construct {
       instanceType: new cdk.aws_ec2.InstanceType('t2.micro'),
       machineImage: cdk.aws_ecs.EcsOptimizedImage.amazonLinux2023(),
       maxCapacity: 1,
+      minCapacity: 0,
       ssmSessionPermissions: true,
       signals: cdk.aws_autoscaling.Signals.waitForCount(1),
       userData: cdk.aws_ec2.UserData.forLinux(),
